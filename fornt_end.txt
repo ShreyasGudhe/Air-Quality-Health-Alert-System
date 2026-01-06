@@ -1,0 +1,175 @@
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+import { Line } from "react-chartjs-2";
+import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import "chart.js/auto";
+import "leaflet/dist/leaflet.css";
+import "leaflet-defaulticon-compatibility";
+import "./App.css";
+
+function App() {
+  const [city, setCity] = useState("");
+  const [aqi, setAqi] = useState(null);
+  const [advice, setAdvice] = useState("");
+  const [prevention, setPrevention] = useState("");
+  const [chartData, setChartData] = useState(null);
+  const [color, setColor] = useState("#2ecc71");
+  const [location, setLocation] = useState(null);
+  const [status, setStatus] = useState("");
+
+  // Ask notification permission once
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission !== "granted") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // Get user live location
+  const getUserLocation = () => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocation({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+        });
+      },
+      () => console.log("Location permission denied")
+    );
+  };
+
+  const getPreviousAqi = () =>
+    Array.from({ length: 6 }, () => Math.floor(Math.random() * 180) + 40);
+
+  const healthAdvice = (aqiValue) => {
+    if (aqiValue <= 50)
+      return ["Good", "Air quality is safe. Enjoy outdoor activities.", "#2ecc71"];
+    if (aqiValue <= 100)
+      return ["Moderate", "Sensitive people should limit outdoor exposure.", "#f1c40f"];
+    if (aqiValue <= 150)
+      return ["Unhealthy (Sensitive)", "Wear a mask. Reduce outdoor activity.", "#e67e22"];
+    if (aqiValue <= 200)
+      return ["Unhealthy", "Avoid outdoor activities. Stay indoors.", "#e74c3c"];
+    if (aqiValue <= 300)
+      return ["Very Unhealthy", "Stay indoors. Use air purifier if available.", "#8e44ad"];
+    return ["Hazardous", "Emergency condition. Avoid going outside.", "#2c3e50"];
+  };
+
+  const sendAqiAlert = (value) => {
+    if (value > 150 && Notification.permission === "granted") {
+      new Notification("⚠️ AQI Alert", {
+        body: "Air quality is unhealthy. Avoid outdoor activity.",
+        icon: "https://cdn-icons-png.flaticon.com/512/1146/1146869.png",
+      });
+    }
+  };
+
+  const fetchAqi = async () => {
+    if (!city) return;
+    try {
+      const API_TOKEN = "5e229522a40e5a7c1980cd67c4d29ad75822bd92";
+      const res = await axios.get(
+        `https://api.waqi.info/feed/${city}/?token=${API_TOKEN}`
+      );
+
+      if (res.data.status !== "ok") {
+        alert("City not found");
+        return;
+      }
+
+      const aqiValue = res.data.data.aqi;
+      setAqi(aqiValue);
+
+      const [statusText, adviceText, colorCode] = healthAdvice(aqiValue);
+      setStatus(statusText);
+      setAdvice(adviceText);
+      setPrevention(adviceText);
+      setColor(colorCode);
+
+      sendAqiAlert(aqiValue);
+      getUserLocation();
+
+      const data = [...getPreviousAqi(), aqiValue];
+      const days = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - 6 + i);
+        return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      });
+
+      setChartData({
+        labels: days,
+        datasets: [
+          {
+            data,
+            borderColor: colorCode,
+            tension: 0.4,
+            pointBackgroundColor: colorCode,
+          },
+        ],
+      });
+    } catch (err) {
+      alert("Error fetching AQI");
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-r from-teal-400 to-blue-300 flex flex-col items-center p-6">
+      <h1 className="text-4xl font-bold mb-6">🌍 Live AQI & Health Alert</h1>
+
+      <div className="flex gap-4 mb-6">
+        <input
+          value={city}
+          onChange={(e) => setCity(e.target.value)}
+          placeholder="Enter city"
+          className="p-3 rounded-lg shadow"
+        />
+        <button
+          onClick={fetchAqi}
+          className="bg-blue-700 text-white px-6 py-3 rounded-lg"
+        >
+          Check AQI
+        </button>
+      </div>
+
+      {aqi !== null && (
+        <>
+          <div
+            className="bg-white p-6 rounded-2xl shadow-xl text-center w-full max-w-xl"
+            style={{ borderTop: `8px solid ${color}` }}
+          >
+            <div className="text-6xl font-bold" style={{ color }}>
+              {aqi}
+            </div>
+            <div className="text-xl font-semibold">{status}</div>
+            <p className="mt-2">{advice}</p>
+          </div>
+
+          <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-3xl mt-6">
+            {chartData && <Line data={chartData} options={{ plugins: { legend: { display: false } } }} />}
+          </div>
+
+          {location && (
+            <div className="bg-white p-4 rounded-2xl shadow-xl w-full max-w-3xl mt-6">
+              <MapContainer
+                center={[location.lat, location.lon]}
+                zoom={11}
+                className="h-80 w-full rounded-xl"
+              >
+                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                <Marker position={[location.lat, location.lon]}>
+                  <Popup>
+                    <b>Your Location</b>
+                    <br />
+                    AQI: {aqi}
+                  </Popup>
+                </Marker>
+              </MapContainer>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+export default App;
