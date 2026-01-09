@@ -99,6 +99,7 @@ function App() {
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false);
   const [autoRefreshMinutes, setAutoRefreshMinutes] = useState(10);
   const [nextAutoRefresh, setNextAutoRefresh] = useState(null);
+  const ipFallbackTriggeredRef = useRef(false);
 
   const diseases = useMemo(
     () => [
@@ -313,6 +314,34 @@ function App() {
     }
   }, [alertThreshold, city, defaultLocation, locationRef, notificationStatus]);
 
+  const resolveApproximateLocation = useCallback(async () => {
+    if (ipFallbackTriggeredRef.current) return;
+    ipFallbackTriggeredRef.current = true;
+    try {
+      setLocationStatus("Resolving network location…");
+      const response = await fetch("https://ipapi.co/json/");
+      if (!response.ok) throw new Error("IP geolocation failed");
+      const data = await response.json();
+      const lat = Number(data.latitude);
+      const lng = Number(data.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("Missing coordinates");
+      const coords = { lat, lng };
+      const labelParts = [data.city, data.region, data.country_name].filter(Boolean);
+      setLocation(coords);
+      setLocationStatus("Approximate via network");
+      setLocationLabel(labelParts.join(", ") || `${lat.toFixed(2)}, ${lng.toFixed(2)}`);
+      fetchAqi({ source: "auto", forceLocation: true, geoOverride: coords });
+    } catch (err) {
+      console.warn("Approximate location fallback failed", err);
+      setLocationStatus("Enter a city to start");
+      setLocationLabel(`Fallback • ${defaultLocation.lat.toFixed(2)}, ${defaultLocation.lng.toFixed(2)}`);
+      if (!fallbackFetchRef.current) {
+        fallbackFetchRef.current = true;
+        fetchAqi({ source: "auto", forceLocation: true, allowFallback: true });
+      }
+    }
+  }, [defaultLocation.lat, defaultLocation.lng, fetchAqi]);
+
   const healthStatus = useMemo(() => {
     if (aqi === null) return { label: "Pending", detail: "Fetch AQI to see status", color: "#475569" };
     if (aqi <= 50) return { label: "Healthy", detail: "Air is clean — stay active", color: "#16a34a" };
@@ -433,12 +462,13 @@ function App() {
       }
       setLocationStatus(message);
       setLocationLabel(`Fallback • ${defaultLocation.lat.toFixed(2)}, ${defaultLocation.lng.toFixed(2)}`);
+      resolveApproximateLocation();
       if (!fallbackFetchRef.current) {
         fallbackFetchRef.current = true;
         fetchAqi({ source: "auto", forceLocation: true, allowFallback: true });
       }
     },
-    [defaultLocation.lat, defaultLocation.lng, fetchAqi]
+    [defaultLocation.lat, defaultLocation.lng, fetchAqi, resolveApproximateLocation]
   );
 
   const requestImmediateLocation = useCallback(() => {
@@ -485,6 +515,7 @@ function App() {
         fallbackFetchRef.current = true;
         fetchAqi({ source: "auto", forceLocation: true, allowFallback: true });
       }
+      resolveApproximateLocation();
       return;
     }
 
@@ -505,6 +536,14 @@ function App() {
       timeout: 8000,
     });
   }, [handleGeoError, handleGeoSuccess]);
+
+  useEffect(() => {
+    if (location || ipFallbackTriggeredRef.current) return;
+    const timer = setTimeout(() => {
+      resolveApproximateLocation();
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [location, resolveApproximateLocation]);
 
   useEffect(() => {
     if (locationStatus !== "Live" || !location) return;
