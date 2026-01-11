@@ -123,7 +123,6 @@ function App() {
   const [cityRankings, setCityRankings] = useState({ loading: false, data: [], error: null });
   const [isLocating, setIsLocating] = useState(false);
   const lastLocationRef = useRef(null);
-  const fallbackFetchRef = useRef(false);
   const locationRef = useRef(null);
   const lastAlertRef = useRef({ timestamp: 0, signature: null });
   const [pollutantChart, setPollutantChart] = useState(null);
@@ -227,12 +226,14 @@ function App() {
   };
 
   const fetchAqi = useCallback(
-    async ({ source = "manual", forceLocation = false, allowFallback = false, geoOverride = null } = {}) => {
+    async ({ source = "manual", forceLocation = false, geoOverride = null } = {}) => {
     try {
       const shouldUseGeo = forceLocation || !city;
-      const geoTarget = geoOverride || locationRef.current || (allowFallback ? defaultLocation : null);
+      const geoTarget = geoOverride || locationRef.current;
       if (shouldUseGeo && !geoTarget) {
-        alert("Enable location or enter a city to fetch AQI.");
+        if (source === "manual") {
+          alert("Allow location access or enter a city to fetch AQI.");
+        }
         return;
       }
       if (!shouldUseGeo && !city) {
@@ -350,10 +351,10 @@ function App() {
       alert("Error fetching AQI");
       console.error(err);
     }
-  }, [alertThreshold, city, defaultLocation, locationRef, notificationStatus]);
+  }, [alertThreshold, city, locationRef, notificationStatus]);
 
-  const resolveApproximateLocation = useCallback(async () => {
-    if (ipFallbackTriggeredRef.current) return;
+  const resolveApproximateLocation = useCallback(async ({ force = false } = {}) => {
+    if (ipFallbackTriggeredRef.current && !force) return;
     ipFallbackTriggeredRef.current = true;
     try {
       setLocationStatus("Resolving network location…");
@@ -373,10 +374,7 @@ function App() {
       console.warn("Approximate location fallback failed", err);
       setLocationStatus("Enter a city to start");
       setLocationLabel(`Fallback • ${defaultLocation.lat.toFixed(2)}, ${defaultLocation.lng.toFixed(2)}`);
-      if (!fallbackFetchRef.current) {
-        fallbackFetchRef.current = true;
-        fetchAqi({ source: "auto", forceLocation: true, allowFallback: true });
-      }
+      ipFallbackTriggeredRef.current = false;
     }
   }, [defaultLocation.lat, defaultLocation.lng, fetchAqi]);
 
@@ -501,19 +499,15 @@ function App() {
       }
       setLocationStatus(message);
       setLocationLabel(`Fallback • ${defaultLocation.lat.toFixed(2)}, ${defaultLocation.lng.toFixed(2)}`);
-      resolveApproximateLocation();
-      if (!fallbackFetchRef.current) {
-        fallbackFetchRef.current = true;
-        fetchAqi({ source: "auto", forceLocation: true, allowFallback: true });
-      }
+      resolveApproximateLocation({ force: true });
     },
-    [defaultLocation.lat, defaultLocation.lng, fetchAqi, resolveApproximateLocation]
+    [defaultLocation.lat, defaultLocation.lng, resolveApproximateLocation]
   );
 
   const requestImmediateLocation = useCallback(() => {
     if (!("geolocation" in navigator)) {
-      alert("Geolocation is not supported here. Enter a city manually.");
-      fetchAqi({ source: "manual", forceLocation: true, allowFallback: true });
+      alert("Geolocation is not supported in this browser. Using approximate network location instead.");
+      resolveApproximateLocation({ force: true });
       return;
     }
     setIsLocating(true);
@@ -532,7 +526,7 @@ function App() {
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
-  }, [fetchAqi, handleGeoError, handleGeoSuccess]);
+  }, [fetchAqi, handleGeoError, handleGeoSuccess, resolveApproximateLocation]);
 
   const handleFetchClick = () => {
     if (city.trim()) {
@@ -550,11 +544,7 @@ function App() {
     if (!("geolocation" in navigator)) {
       setLocationStatus("Geolocation not supported");
       setLocationLabel(`Fallback • ${defaultLocation.lat.toFixed(2)}, ${defaultLocation.lng.toFixed(2)}`);
-      if (!fallbackFetchRef.current) {
-        fallbackFetchRef.current = true;
-        fetchAqi({ source: "auto", forceLocation: true, allowFallback: true });
-      }
-      resolveApproximateLocation();
+      resolveApproximateLocation({ force: true });
       return;
     }
 
@@ -566,7 +556,7 @@ function App() {
     });
 
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [defaultLocation.lat, defaultLocation.lng, fetchAqi, handleGeoError, handleGeoSuccess]);
+  }, [defaultLocation.lat, defaultLocation.lng, handleGeoError, handleGeoSuccess, resolveApproximateLocation]);
 
   useEffect(() => {
     if (!("geolocation" in navigator)) return;
@@ -577,7 +567,7 @@ function App() {
   }, [handleGeoError, handleGeoSuccess]);
 
   useEffect(() => {
-    if (location || ipFallbackTriggeredRef.current) return;
+    if (location) return;
     const timer = setTimeout(() => {
       resolveApproximateLocation();
     }, 6000);
@@ -594,7 +584,7 @@ function App() {
     }
     lastLocationRef.current = location;
     fetchAqi({ source: "auto", forceLocation: true });
-  }, [location?.lat, location?.lng, locationStatus]);
+  }, [fetchAqi, location?.lat, location?.lng, locationStatus]);
 
   useEffect(() => {
     let cancelled = false;
@@ -645,14 +635,6 @@ function App() {
   }, [location?.lat, location?.lng]);
 
   useEffect(() => {
-    if (aqi !== null) return;
-    if (location || city) return;
-    if (fallbackFetchRef.current) return;
-    fallbackFetchRef.current = true;
-    fetchAqi({ source: "auto", forceLocation: true, allowFallback: true });
-  }, [location, city, aqi]);
-
-  useEffect(() => {
     if (!autoRefreshEnabled) {
       setNextAutoRefresh(null);
       return;
@@ -663,18 +645,38 @@ function App() {
       const nextTime = new Date(Date.now() + intervalMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       setNextAutoRefresh(nextTime);
     };
+    const triggerRefresh = () => {
+      if (locationRef.current) {
+        fetchAqi({ source: "auto", forceLocation: true });
+        return;
+      }
+      if (city.trim()) {
+        fetchAqi({ source: "auto" });
+        return;
+      }
+      resolveApproximateLocation();
+    };
+    triggerRefresh();
     updateNextRun();
     const timer = setInterval(() => {
-      fetchAqi({ source: "auto", forceLocation: true, allowFallback: true });
+      triggerRefresh();
       updateNextRun();
     }, intervalMs);
     return () => clearInterval(timer);
-  }, [autoRefreshEnabled, autoRefreshMinutes, fetchAqi]);
+  }, [autoRefreshEnabled, autoRefreshMinutes, city, fetchAqi, resolveApproximateLocation]);
 
   useEffect(() => {
     if (!autoRefreshEnabled) return;
-    fetchAqi({ source: "auto", forceLocation: true, allowFallback: true });
-  }, [autoRefreshEnabled, fetchAqi]);
+    if (locationRef.current) {
+      fetchAqi({ source: "auto", forceLocation: true });
+      return;
+    }
+    if (city.trim()) {
+      fetchAqi({ source: "auto" });
+      return;
+    }
+    resolveApproximateLocation();
+  }, [autoRefreshEnabled, city, fetchAqi, resolveApproximateLocation]);
 
   return (
     <div className="page">
