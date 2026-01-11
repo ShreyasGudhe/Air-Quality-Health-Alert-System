@@ -33,6 +33,13 @@ Open the printed local URL (usually http://localhost:5173/).
 npm run build
 ```
 
+## Deploy to Vercel
+1. Push this folder to a Git provider (GitHub/GitLab/Bitbucket) if you have not already.
+2. In Vercel, click **Add New → Project**, import the repo, and keep the defaults (framework auto-detects Vite and uses the included `vercel.json`).
+3. In **Project Settings → Environment Variables**, add every key from the `.env` section above (names must keep the `VITE_` prefix). Use the same values that work locally.
+4. Trigger the first deploy. Vercel runs `npm install` and `npm run build`, then serves the static `dist` output globally. Subsequent git pushes redeploy automatically.
+5. (Optional) Use **Settings → Domains** to assign a custom hostname once you are happy with the MVP link.
+
 ## Notes
 - Uses the WAQI public API; the token is defined in `src/App.jsx` as `API_TOKEN`.
 - Dependencies: React 18, Vite, axios, chart.js, react-chartjs-2.
