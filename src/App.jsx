@@ -121,7 +121,6 @@ function App() {
   const [history, setHistory] = useState([]);
   const [lastUpdated, setLastUpdated] = useState("Awaiting data");
   const [cityRankings, setCityRankings] = useState({ loading: false, data: [], error: null });
-  const [isLocating, setIsLocating] = useState(false);
   const lastLocationRef = useRef(null);
   const locationRef = useRef(null);
   const lastAlertRef = useRef({ timestamp: 0, signature: null });
@@ -132,6 +131,7 @@ function App() {
   const [autoRefreshMinutes, setAutoRefreshMinutes] = useState(10);
   const [nextAutoRefresh, setNextAutoRefresh] = useState(null);
   const ipFallbackTriggeredRef = useRef(false);
+  const lastResolvedPlacenameRef = useRef(null);
 
   const diseases = useMemo(
     () => [
@@ -504,30 +504,6 @@ function App() {
     [defaultLocation.lat, defaultLocation.lng, resolveApproximateLocation]
   );
 
-  const requestImmediateLocation = useCallback(() => {
-    if (!("geolocation" in navigator)) {
-      alert("Geolocation is not supported in this browser. Using approximate network location instead.");
-      resolveApproximateLocation({ force: true });
-      return;
-    }
-    setIsLocating(true);
-    setLocationStatus("Requesting live fix…");
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        handleGeoSuccess(pos);
-        setIsLocating(false);
-        fetchAqi({ source: "manual", forceLocation: true, geoOverride: { lat: pos.coords.latitude, lng: pos.coords.longitude } });
-      },
-      (err) => {
-        console.warn("Immediate geolocation failed", err);
-        setIsLocating(false);
-        handleGeoError(err);
-        alert("Unable to fetch live location. Allow location access or type a city.");
-      },
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  }, [fetchAqi, handleGeoError, handleGeoSuccess, resolveApproximateLocation]);
-
   const handleFetchClick = () => {
     if (city.trim()) {
       fetchAqi({ source: "manual" });
@@ -537,7 +513,8 @@ function App() {
       fetchAqi({ source: "manual", forceLocation: true });
       return;
     }
-    requestImmediateLocation();
+    resolveApproximateLocation({ force: true });
+    alert("Fetching your approximate location. Please allow permissions or enter a city manually.");
   };
 
   useEffect(() => {
@@ -589,13 +566,24 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     if (!location) {
+      lastResolvedPlacenameRef.current = null;
       setLocationLabel("Awaiting live location…");
       return () => {
         cancelled = true;
       };
     }
 
-    setLocationLabel("Resolving nearby place…");
+    const previous = lastResolvedPlacenameRef.current;
+    if (previous) {
+      const deltaLat = Math.abs(previous.lat - location.lat);
+      const deltaLng = Math.abs(previous.lng - location.lng);
+      if (deltaLat < 0.001 && deltaLng < 0.001) {
+        setLocationLabel(previous.label);
+        return () => {
+          cancelled = true;
+        };
+      }
+    }
 
     const fetchPlacename = async () => {
       try {
@@ -613,16 +601,19 @@ function App() {
           response.data.display_name ||
           response.data.address?.city ||
           response.data.address?.town ||
-          response.data.address?.village;
+          response.data.address?.village ||
+          `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
         if (!cancelled) {
-          setLocationLabel(
-            namedLocation || `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`
-          );
+          const nextLabel = namedLocation;
+          lastResolvedPlacenameRef.current = { lat: location.lat, lng: location.lng, label: nextLabel };
+          setLocationLabel(nextLabel);
         }
       } catch (err) {
         console.warn("Reverse geocode failed", err);
         if (!cancelled) {
-          setLocationLabel(`${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`);
+          const fallbackLabel = `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
+          lastResolvedPlacenameRef.current = { lat: location.lat, lng: location.lng, label: fallbackLabel };
+          setLocationLabel(fallbackLabel);
         }
       }
     };
@@ -710,11 +701,8 @@ function App() {
               placeholder="Enter a city or locality"
               className="input"
             />
-            <button onClick={handleFetchClick} className="button" disabled={isLocating}>
-              {isLocating ? "Locating…" : "Check AQI"}
-            </button>
-            <button className="button ghost" onClick={requestImmediateLocation} disabled={isLocating}>
-              {isLocating ? "Locating…" : "Use my location"}
+            <button onClick={handleFetchClick} className="button">
+              Check AQI
             </button>
           </div>
           <div className="hero-meta">
