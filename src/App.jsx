@@ -18,6 +18,39 @@ const RISK_MODEL = [
 const WAQI_API_TOKEN = import.meta.env.VITE_WAQI_TOKEN || "5e229522a40e5a7c1980cd67c4d29ad75822bd92";
 const ALERT_COOLDOWN_MS = 5 * 60 * 1000;
 
+const parseStationCoordinates = (value) => {
+  if (!value) return null;
+  const toNumber = (input) => {
+    const num = Number(input);
+    return Number.isFinite(num) ? num : null;
+  };
+  if (Array.isArray(value) && value.length >= 2) {
+    const lat = toNumber(value[0]);
+    const lng = toNumber(value[1]);
+    if (lat !== null && lng !== null) {
+      return { lat, lng };
+    }
+  }
+  if (typeof value === "string") {
+    const parts = value.split(/[, ]+/).filter(Boolean);
+    if (parts.length >= 2) {
+      const lat = toNumber(parts[0]);
+      const lng = toNumber(parts[1]);
+      if (lat !== null && lng !== null) {
+        return { lat, lng };
+      }
+    }
+  }
+  if (typeof value === "object" && value !== null) {
+    const lat = toNumber(value.lat);
+    const lng = toNumber(value.lng ?? value.lon);
+    if (lat !== null && lng !== null) {
+      return { lat, lng };
+    }
+  }
+  return null;
+};
+
 const deriveAqiValue = (stationData) => {
   const raw = stationData?.aqi;
   const numeric = Number(raw);
@@ -225,6 +258,7 @@ function App() {
       const stationMeta = res.data.data?.city;
       const observedAt = res.data.data?.time?.s || new Date().toLocaleString();
       setLastUpdated(observedAt);
+      const stationCoords = parseStationCoordinates(stationMeta?.geo || stationMeta?.location);
       const derivedLabel = !shouldUseGeo && city?.trim()
         ? city.trim()
         :
@@ -235,8 +269,12 @@ function App() {
       setPrevention(preventionText);
       setColor(colorCode);
       const label = derivedLabel;
-      if (shouldUseGeo) {
-        setLocationLabel(label);
+      setLocationLabel(label);
+      if (!shouldUseGeo) {
+        if (stationCoords) {
+          setLocation(stationCoords);
+        }
+        setLocationStatus("City lookup");
       }
       if (source === "manual") {
         alert(`Current AQI in ${label} is ${aqiValue}`);
@@ -428,13 +466,14 @@ function App() {
   const latestManualReading = history[0];
   const mapCenter = location || defaultLocation;
   const isLive = locationStatus === "Live";
+  const isCityLookup = locationStatus === "City lookup";
   const aqiPercent = useMemo(() => {
     if (aqi === null) return 6;
     return Math.min(400, Math.max(0, aqi)) / 4;
   }, [aqi]);
   const updatedLabel = lastUpdated || latestManualReading?.observedAt || "Awaiting data";
-  const locationModeLabel = location ? "GPS tracking" : city ? "City lookup" : "Setup required";
-  const locationModeHint = location ? locationText : city || "Add a city name to start";
+  const locationModeLabel = isLive ? "GPS tracking" : isCityLookup ? "City lookup" : city ? "City lookup" : "Setup required";
+  const locationModeHint = isLive || isCityLookup ? locationText : city || "Add a city name to start";
   const cleanestCity = cityRankings.data?.[0];
   const mostPollutedCity = cityRankings.data?.[cityRankings.data.length - 1];
   const aqiDelta = useMemo(() => {
