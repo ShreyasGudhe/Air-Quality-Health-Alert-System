@@ -153,6 +153,16 @@ function App() {
     locationRef.current = location;
   }, [location]);
 
+  useEffect(() => {
+    // Browsers block geolocation on insecure origins; force HTTPS outside localhost.
+    if (typeof window === "undefined") return;
+    if (window.location.hostname === "localhost") return;
+    if (window.location.protocol === "http:") {
+      const secureUrl = window.location.href.replace(/^http:/, "https:");
+      window.location.replace(secureUrl);
+    }
+  }, []);
+
   
 
   const fetchCityRankings = useCallback(async () => {
