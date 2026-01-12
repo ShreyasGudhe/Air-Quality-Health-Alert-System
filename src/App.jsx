@@ -596,36 +596,36 @@ function App() {
     }
 
     const fetchPlacename = async () => {
-      try {
-        const response = await axios.get("https://nominatim.openstreetmap.org/reverse", {
-          params: {
-            format: "jsonv2",
-            lat: location.lat,
-            lon: location.lng,
-          },
-          headers: {
-            "Accept-Language": "en",
-          },
-        });
-        const namedLocation =
-          response.data.display_name ||
-          response.data.address?.city ||
-          response.data.address?.town ||
-          response.data.address?.village ||
-          `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
-        if (!cancelled) {
-          const nextLabel = namedLocation;
-          lastResolvedPlacenameRef.current = { lat: location.lat, lng: location.lng, label: nextLabel };
-          setLocationLabel(nextLabel);
-        }
-      } catch (err) {
-        console.warn("Reverse geocode failed", err);
+      if (!isMapLoaded || !window.google) {
+        console.warn("Google Maps API not loaded, skipping reverse geocode");
         if (!cancelled) {
           const fallbackLabel = `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
           lastResolvedPlacenameRef.current = { lat: location.lat, lng: location.lng, label: fallbackLabel };
           setLocationLabel(fallbackLabel);
         }
+        return;
       }
+      const geocoder = new window.google.maps.Geocoder();
+      geocoder.geocode(
+        { location: { lat: location.lat, lng: location.lng } },
+        (results, status) => {
+          if (status === window.google.maps.GeocoderStatus.OK && results[0]) {
+            const namedLocation = results[0].formatted_address || `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
+            if (!cancelled) {
+              const nextLabel = namedLocation;
+              lastResolvedPlacenameRef.current = { lat: location.lat, lng: location.lng, label: nextLabel };
+              setLocationLabel(nextLabel);
+            }
+          } else {
+            console.warn("Reverse geocode failed", status);
+            if (!cancelled) {
+              const fallbackLabel = `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
+              lastResolvedPlacenameRef.current = { lat: location.lat, lng: location.lng, label: fallbackLabel };
+              setLocationLabel(fallbackLabel);
+            }
+          }
+        }
+      );
     };
 
     fetchPlacename();
@@ -633,7 +633,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [location?.lat, location?.lng]);
+  }, [location?.lat, location?.lng, isMapLoaded]);
 
   useEffect(() => {
     if (!autoRefreshEnabled) {
