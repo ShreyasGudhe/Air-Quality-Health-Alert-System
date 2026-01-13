@@ -596,36 +596,61 @@ function App() {
     }
 
     const fetchPlacename = async () => {
-      if (!isMapLoaded || !window.google) {
-        console.warn("Google Maps API not loaded, skipping reverse geocode");
+      try {
+        // Try Nominatim for reverse geocoding (free, no API key needed)
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${location.lat}&lon=${location.lng}&zoom=18&addressdetails=1`,
+          {
+            headers: {
+              'User-Agent': 'AQI-Monitor-App/1.0' // Required by Nominatim
+            }
+          }
+        );
+        if (response.ok) {
+          const data = await response.json();
+          const namedLocation = data.display_name || `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
+          if (!cancelled) {
+            const nextLabel = namedLocation;
+            lastResolvedPlacenameRef.current = { lat: location.lat, lng: location.lng, label: nextLabel };
+            setLocationLabel(nextLabel);
+          }
+          return;
+        }
+      } catch (err) {
+        console.warn("Nominatim reverse geocode failed", err);
+      }
+
+      // Fallback to Google Maps if available
+      if (isMapLoaded && window.google) {
+        const geocoder = new window.google.maps.Geocoder();
+        geocoder.geocode(
+          { location: { lat: location.lat, lng: location.lng } },
+          (results, status) => {
+            if (status === window.google.maps.GeocoderStatus.OK && results[0]) {
+              const namedLocation = results[0].formatted_address || `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
+              if (!cancelled) {
+                const nextLabel = namedLocation;
+                lastResolvedPlacenameRef.current = { lat: location.lat, lng: location.lng, label: nextLabel };
+                setLocationLabel(nextLabel);
+              }
+            } else {
+              console.warn("Google reverse geocode failed", status);
+              if (!cancelled) {
+                const fallbackLabel = `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
+                lastResolvedPlacenameRef.current = { lat: location.lat, lng: location.lng, label: fallbackLabel };
+                setLocationLabel(fallbackLabel);
+              }
+            }
+          }
+        );
+      } else {
+        // Final fallback to coordinates
         if (!cancelled) {
           const fallbackLabel = `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
           lastResolvedPlacenameRef.current = { lat: location.lat, lng: location.lng, label: fallbackLabel };
           setLocationLabel(fallbackLabel);
         }
-        return;
       }
-      const geocoder = new window.google.maps.Geocoder();
-      geocoder.geocode(
-        { location: { lat: location.lat, lng: location.lng } },
-        (results, status) => {
-          if (status === window.google.maps.GeocoderStatus.OK && results[0]) {
-            const namedLocation = results[0].formatted_address || `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
-            if (!cancelled) {
-              const nextLabel = namedLocation;
-              lastResolvedPlacenameRef.current = { lat: location.lat, lng: location.lng, label: nextLabel };
-              setLocationLabel(nextLabel);
-            }
-          } else {
-            console.warn("Reverse geocode failed", status);
-            if (!cancelled) {
-              const fallbackLabel = `${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`;
-              lastResolvedPlacenameRef.current = { lat: location.lat, lng: location.lng, label: fallbackLabel };
-              setLocationLabel(fallbackLabel);
-            }
-          }
-        }
-      );
     };
 
     fetchPlacename();
